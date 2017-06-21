@@ -34,8 +34,10 @@ int main (int argc, char *argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  if (rank == 0) {    /* Processo mestre */
-    printf("ALOOOOOOOOOO\n");
+  if (rank == 0) {
+
+    /************* Processo mestre *************/
+
     // Lendo arquivo, alocando memória
     int size, steps;
     FILE *f;
@@ -59,6 +61,8 @@ int main (int argc, char *argv[]) {
 
     // Broadcast do numero de linhas
     MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     // Último recebe quantidade diferente (linhas + resto)
     int last = lines + reminder;
@@ -73,6 +77,26 @@ int main (int argc, char *argv[]) {
 
     free_board(prev,size);
     free_board(next,size);
+
+  } else {
+
+    /************* Processos escravos *************/
+
+    // Recebendo número de linhas, passos e tamanho
+    int lines, steps, size;
+
+    MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if (rank == num_processes-1) {
+      MPI_Recv(&lines, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
+      printf("Processo %d, recebi %d linhas.\n", rank, lines);
+
+    } else {
+      printf("Processo %d, recebi %d linhas.\n", rank, lines);
+    }
+
   }
 
   /*for (int i=0; i<steps; i++) {
@@ -125,7 +149,6 @@ int adjacent_to (cell_t ** board, int size, int i, int j) {
 void play (cell_t ** board, cell_t ** newboard, int size, int start, int end) {
   int i, j, a;
   /* for each cell, apply the rules of Life */
-  #pragma omp parallel for collapse (2)
   for (i=0; i<size; i++) {
     for (j=0; j<size; j++) {
       a = adjacent_to (board, size, i, j);
