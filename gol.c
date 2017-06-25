@@ -18,7 +18,7 @@
 
 typedef unsigned char cell_t;
 
-int adjacent_to (cell_t * board, int size, int i, int j);
+int adjacent_to (cell_t * board, int size, int lines, int i, int j);
 void play (cell_t * board, cell_t * newboard, int size, int lines, int start, int end);
 void print (cell_t * board, int size);
 void read_file (FILE * f, cell_t * board, int size);
@@ -35,7 +35,7 @@ void master(int rank) {
   cell_t * prev = (cell_t *) malloc(sizeof(cell_t)*size*size);
   read_file (f, prev,size);
   fclose(f);
-  cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*size);
+  //cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*size);
 
   #ifdef DEBUG
   printf("Initial:\n");
@@ -58,7 +58,7 @@ void master(int rank) {
    */ 
   int lines = size/(num_proc-1); 
   int reminder = size%(num_proc-1);
-
+  steps = 1;
   MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -67,6 +67,7 @@ void master(int rank) {
   int last = lines + reminder;
   MPI_Send(&last, 1, MPI_INT, (num_proc-1), 0, MPI_COMM_WORLD);
 
+  int flag;
   MPI_Status st;
   MPI_Request* requests = (MPI_Request*) malloc(sizeof(MPI_Request) * num_proc-2);
 
@@ -76,33 +77,49 @@ void master(int rank) {
    */
   for (int j = 0; j < steps; ++j) {
     // Enviando board
-    MPI_Isend(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, j, MPI_COMM_WORLD, &(requests[0]));
+    MPI_Isend(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
     int i;
     for (i = 2; i < num_proc - 1; ++i) {
-      MPI_Isend(prev+((i-2)*lines*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, j, MPI_COMM_WORLD, &(requests[i-1]));
+      MPI_Isend(prev+((i-2)*lines*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
     }
 
-    MPI_Isend(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, j, MPI_COMM_WORLD, &(requests[i]));
+    MPI_Isend(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
+
+    while(1) {
+      MPI_Testall(num_proc-2, requests, &flag, MPI_STATUSES_IGNORE);
+      if (flag == 1) { 
+        printf("Flag send\n"); 
+        break; 
+      }
+    }
 
     // num_proc-2 ou num_proc-1 ??
     MPI_Waitall(num_proc-2, requests, MPI_STATUSES_IGNORE);
   
     // Recebendo board novo
-    MPI_Irecv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
+    MPI_Irecv(prev, lines*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
     for (i = 2; i < num_proc - 1; ++i) {
-      MPI_Irecv(prev+((i-2)*lines*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, j, MPI_COMM_WORLD, &(requests[i-1]));
+      MPI_Irecv(prev+(i*lines*size), lines*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
     }
 
-    MPI_Irecv(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, j, MPI_COMM_WORLD, &(requests[i]));
+    MPI_Irecv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
+
+    while(1) {
+      MPI_Testall(num_proc-2, requests, &flag, MPI_STATUSES_IGNORE);
+      if (flag == 1) { 
+        printf("Flag recv\n"); 
+        break; 
+      }
+    }
 
     MPI_Waitall(num_proc-2,requests, MPI_STATUSES_IGNORE);
 
-    //#ifdef DEBUG
-    printf("%d ----------\n", i + 1);
+    #ifdef DEBUG
+    printf("%d ----------\n", j);
     print (prev,size);
-    //#endif
+    #endif
   }
 
   #ifdef RESULT
@@ -110,8 +127,8 @@ void master(int rank) {
   print (prev,size);
   #endif
 
-  free(prev);
-  free(next);  
+  //free(prev);
+  //free(next);  
 }
 
 void slave(int rank) {
@@ -135,18 +152,22 @@ void slave(int rank) {
     cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*lines+1);
 
     for (int i = 0; i < steps; ++i) {
-      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, i, MPI_COMM_WORLD, &st);
+      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
       
       MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
-      printf("Count %d rank %d\n", count, rank);
 
+      // int size, int lines, int start, int end
       play(prev, next, size, lines+1, 1, lines);
 
-      MPI_Send(next, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, i, MPI_COMM_WORLD);
+      printf("Play rank: %d step: %d\n", rank, i);
+
+      MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+
+      printf("Sending rank: %d step: %d\n", rank, i);
     }
 
-    free(next);
-    free(prev);
+    //free(next);
+    //free(prev);
 
   } else if (rank == 1) {
     /****************    Primeiro processo     ****************/
@@ -154,18 +175,21 @@ void slave(int rank) {
     cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*lines+1);
 
     for (int i = 0; i < steps; ++i) {
-      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, i, MPI_COMM_WORLD, &st);
+      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
 
       MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
-      printf("Count %d rank %d\n", count, rank);
 
       play(prev, next, size, lines+1, 1, lines);
 
-      MPI_Send(next, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, i, MPI_COMM_WORLD);
+      printf("Play rank: %d step: %d\n", rank, i);
+
+      MPI_Send(next, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+
+      printf("Sending rank: %d step: %d\n", rank, i);
     }
 
-    free(next);
-    free(prev);
+    //free(next);
+    //free(prev);
 
   } else {
     /****************     Processos do meio      ****************/
@@ -173,18 +197,21 @@ void slave(int rank) {
     cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*lines+2);
 
     for (int i = 0; i < steps; ++i) {
-      MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, i, MPI_COMM_WORLD, &st);
+      MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
       
       MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
-      printf("Count %d rank %d\n", count, rank);
 
       play(prev, next, size, lines+2, 1, lines);
 
-      MPI_Send(next, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, i, MPI_COMM_WORLD);
+      printf("Play rank: %d step: %d\n", rank, i);
+
+      MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+
+      printf("Sending rank: %d step: %d\n", rank, i);
     }
 
-    free(next);
-    free(prev);
+    //free(next);
+    //free(prev);
   } 
 }
 
@@ -200,43 +227,51 @@ int main (int argc, char *argv[]) {
   } else {
     slave(rank);
   }
-
+  
+  MPI_Barrier(MPI_COMM_WORLD);
+  printf("========> RANK %d TERMINOU \n", rank);
   MPI_Finalize();
 }
 
 /* return the number of on cells adjacent to the i,j cell */
-int adjacent_to (cell_t * board, int size, int i, int j) {
-  int k, l, count=0;
+int adjacent_to (cell_t * board, int size, int lines, int i, int j) {
+  int count=0;
 
-  int sk = (i>0) ? i-1 : i;
-  int ek = (i+1 < size) ? i+1 : i;
-  int sl = (j>0) ? j-1 : j;
-  int el = (j+1 < size) ? j+1 : j;
-
-  for (k=sk; k<=ek; k++) {
-    for (l=sl; l<=el; l++) {
-      count+=board[size*k+l];
-    }
+  if (i > 0) {
+    count += board[size*(i-1) + j];
+    if (j > 1) count += board[size*(i-1) + j-1];
+    if (j+1 < size) count += board[size*(i-1) + j+1];
   }
-  count-=board[size*i+j];
+
+  if (i+1 < lines) {
+    count += board[size*(i+1) + j];
+    if (j+1 < size) count += board[size*(i+1) + j+1];
+  }
+
+  if (j > 1) {
+    count += board[size*i + j-1];
+    if (i+1 < lines) count += board[size*(i+1) + j-1];
+  }
+
+  if (j+1 < size) {
+    count += board[size*i + j+1];
+  }
 
   return count;
 }
 
 void play (cell_t * board, cell_t * newboard, int size, int lines, int start, int end) {
-  int i, j, a, index;
+  int i, j, a, linesIndex, index;
   /* for each cell, apply the rules of Life */
   /*  Por utilizar um array unidimensional para a matriz, é preciso converter [i][j]
    *  para um único index [], usando [size*i+j]
    */
   for (i=start; i<end; i++) {
+    linesIndex = size*i;
     for (j=0; j<size; j++) {
-      index = size*i + j;
-      a = adjacent_to (board, size, i, j);
-      if (a == 2) newboard[index] = board[index];
-      if (a == 3) newboard[index] = 1;
-      if (a < 2) newboard[index] = 0;
-      if (a > 3) newboard[index] = 0;
+      index = linesIndex + j;
+      a = adjacent_to (board, size, lines, i, j);
+      newboard[index] = (a==2) ? board[index] : (a==3);
     }
   }
 }
