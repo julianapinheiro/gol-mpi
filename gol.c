@@ -18,7 +18,7 @@
 
 typedef unsigned char cell_t;
 
-cell_t ** allocate_board (int size);
+cell_t ** allocate_board (int lines, int rows);
 void free_board (cell_t ** board, int size);
 int adjacent_to (cell_t ** board, int size, int i, int j);
 void play (cell_t ** board, cell_t ** newboard, int size, int lines, int start, int end);
@@ -34,11 +34,10 @@ void master(int rank) {
   FILE *f;
   f = stdin;
   fscanf(f,"%d %d", &size, &steps);
-  cell_t ** prev = allocate_board (size);
+  cell_t ** prev = allocate_board (size, size);
   read_file (f, prev,size);
   fclose(f);
-  cell_t ** next = allocate_board (size);
-  //cell_t ** tmp;
+  cell_t ** next = allocate_board (size, size);
 
   #ifdef DEBUG
   printf("Initial:\n");
@@ -70,44 +69,42 @@ void master(int rank) {
   int last = lines + reminder;
   MPI_Send(&last, 1, MPI_INT, (num_proc-1), 0, MPI_COMM_WORLD);
 
+  MPI_Status st;
+  MPI_Request* requests = (MPI_Request*) malloc(sizeof(MPI_Request) * num_proc-1);
+
   /*  Enviando e recebendo trabalho para/de escravos conforme steps.
    *  Cada processo recebe suas linhas + a linha anterior e a seguinte
    *  para poder utilizar o método adjacent_to()
    */
-  MPI_Status st;
-  MPI_Request request;
   for (int j = 0; j < steps; ++j) {
     // Enviando board
-    MPI_Isend(&prev[0], (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &request);
+    MPI_Isend(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
-    for (int i = 2; i < num_proc - 1; ++i) {
-      MPI_Isend(&prev[(i*lines)-1], (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &request);
+    int i;
+    for (i = 2; i < num_proc - 1; ++i) {
+      MPI_Isend(prev+((i-2)*lines*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
     }
 
-    MPI_Isend(&prev[(num_proc-1)*lines], (lines+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &request);
+    MPI_Isend(prev+(((i*lines)-1) * size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
 
-    MPI_Wait(&request, &st);
+    // num_proc-2 ou num_proc-1 ??
+    MPI_Waitall(num_proc-2, requests, MPI_STATUSES_IGNORE);
 
     // Recebendo board novo
-    MPI_Irecv(&prev[0], (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &request);
+    MPI_Irecv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
-    for (int i = 2; i < num_proc - 1; ++i) {
-      MPI_Irecv(&prev[(i*lines)-1], (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &request);
+    for (i = 2; i < num_proc - 1; ++i) {
+      MPI_Irecv(prev+((i-2)*lines*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
     }
 
-    MPI_Irecv(&prev[(num_proc-1)*lines], (lines+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &request);
+    MPI_Irecv(prev+(((i*lines)-1) * size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
 
-    // TO-DO: Implementar algum wait aqui
-    MPI_Wait(&request, &st);
+    MPI_Waitall(num_proc-2,requests, MPI_STATUSES_IGNORE);
 
     #ifdef DEBUG
     printf("%d ----------\n", i + 1);
     print (prev,size);
     #endif
-    /*tmp = next;
-    next = prev;
-    prev = tmp;*/
-
   }
 
   #ifdef RESULT
@@ -123,34 +120,71 @@ void slave(int rank) {
   /*************    Processos escravos     *************/
 
   // Recebendo número de linhas, passos e tamanho
-  int lines, size, steps, num_proc;
+  int lines, size, steps, num_proc, count;
+  MPI_Status st;
 
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
 
   MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-  cell_t ** prev = (cell_t **) malloc(sizeof(cell_t) * size * (lines+2));
-  cell_t ** next = (cell_t **) malloc(sizeof(cell_t) * size * (lines+2));
-  MPI_Status st;
   
-  // Último processo tem número de linhas diferente
+  /****************    Último processo     ****************/
   if (rank == num_proc-1) {
     MPI_Recv(&lines, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
-  }
 
-  // ==============> Até aqui certo, play() no for ta com problema
-  // TO-DO: Arrumar seg fault do play()
+    cell_t ** prev = allocate_board(lines+1, size);
+    cell_t ** next = allocate_board(lines+1, size);
 
-  for (int i = 0; i < steps; ++i) {
-    MPI_Recv(&prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+    for (int i = 0; i < steps; ++i) {
+      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+      
+      MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
 
-    play(prev, next, size, lines+2, 1, lines);
+      play(prev, next, size, lines+1, 1, lines);
 
-    MPI_Send(&next, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-  }
+      MPI_Send(next, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+    }
 
+    free(next);
+    free(prev);
+
+  } else if (rank == 1) {
+    /****************    Primeiro processo     ****************/
+    cell_t ** prev = allocate_board(lines+1, size);
+    cell_t ** next = allocate_board(lines+1, size);
+
+    for (int i = 0; i < steps; ++i) {
+      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+      
+      MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
+
+      play(prev, next, size, lines+2, 1, lines);
+
+      MPI_Send(next, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+    }
+
+    free(next);
+    free(prev);
+
+  } else {
+    /****************     Processos do meio      ****************/
+    cell_t ** prev = allocate_board(lines+2, size);
+    cell_t ** next = allocate_board(lines+2, size);
+
+    for (int i = 0; i < steps; ++i) {
+      MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+      
+      MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
+
+      play(prev, next, size, lines+2, 1, lines);
+
+      MPI_Send(next, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+    }
+
+    free(next);
+    free(prev);
+  } 
 }
 
 int main (int argc, char *argv[]) {
@@ -178,9 +212,11 @@ int adjacent_to (cell_t ** board, int size, int i, int j) {
   int sl = (j>0) ? j-1 : j;
   int el = (j+1 < size) ? j+1 : j;
 
-  for (k=sk; k<=ek; k++)
-  for (l=sl; l<=el; l++)
-  count+=board[k][l];
+  for (k=sk; k<=ek; k++) {
+    for (l=sl; l<=el; l++) {
+      count+=board[k][l];
+    }
+  }
   count-=board[i][j];
 
   return count;
@@ -200,11 +236,11 @@ void play (cell_t ** board, cell_t ** newboard, int size, int lines, int start, 
   }
 }
 
-cell_t ** allocate_board (int size) {
-  cell_t ** board = (cell_t **) malloc(sizeof(cell_t*)*size);
+cell_t ** allocate_board (int rows, int cols) {
+  cell_t ** board = (cell_t **) malloc(sizeof(cell_t*)*rows);
   int i;
-  for (i=0; i<size; i++)
-  board[i] = (cell_t *) malloc(sizeof(cell_t)*size);
+  for (i=0; i<rows; i++)
+    board[i] = (cell_t *) malloc(sizeof(cell_t)*cols);
   return board;
 }
 
