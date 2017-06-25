@@ -36,7 +36,7 @@ void master(int rank) {
   read_file (f, prev,size);
   fclose(f);
 
-  #ifdef INITIAL
+  #ifdef DEBUG
   printf("Initial:\n");
   print(prev,size, size);
   #endif
@@ -78,8 +78,8 @@ void master(int rank) {
     MPI_Send(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD);
     
     // Fazendo um print aqui pra checar as primeiras linhas só
-    print(prev, size, lines+1);
-    printf("--------------\n");
+    //print(prev, size, lines+1);
+    //printf("--------------\n");
 
     int i;
     for (i = 2; i < num_proc - 1; ++i) {
@@ -129,6 +129,7 @@ void slave(int rank) {
   lines = info[0];
   size = info[1];
   steps = info[2];
+  int teste = 0;
   
   /****************    Último processo     ****************/
   if (rank == num_proc-1) {
@@ -139,6 +140,10 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+
+      printf("----------------------- step %d\n", i);
+      print(prev, size, lines+1); 
+      printf("----------------------- step %d\n", i);
 
       play(prev, next, size, lines+1, 1, lines);
 
@@ -158,9 +163,17 @@ void slave(int rank) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
 
       // Fazendo um print pra checar o que ele recebe
-      print(prev, size, lines+1);
-      printf("-----------------------\n");
-      play(prev, next, size, lines+1, 1, lines);
+      //printf("----------------------- step %d\n", i);
+      //print(prev, size, lines+1); 
+      //printf("----------------------- step %d\n", i);
+
+      //int size, int lines, int start, int end
+      play(prev, next, size, lines+1, 0, lines);
+
+      //printf("----------------------- PLAY %d\n", i);
+      //print(next, size, lines); 
+      //printf("----------------------- play %d\n", i);
+
 
       MPI_Send(next, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
       MPI_Barrier(MPI_COMM_WORLD);
@@ -177,6 +190,7 @@ void slave(int rank) {
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
       
+      //int size, int lines, int start, int end
       play(prev, next, size, lines+2, 1, lines);
 
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
