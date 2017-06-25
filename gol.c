@@ -59,9 +59,9 @@ void master(int rank) {
   int lines = size/(num_proc-1); 
   int reminder = size%(num_proc-1);
   steps = 1;
-  MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  int info[3] = {lines, size, steps};
+  MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
 
   // Último recebe quantidade diferente (linhas + resto)
   int last = lines + reminder;
@@ -69,7 +69,8 @@ void master(int rank) {
 
   int flag;
   MPI_Status st;
-  MPI_Request* requests = (MPI_Request*) malloc(sizeof(MPI_Request) * num_proc-2);
+  //MPI_Request* requests = (MPI_Request*) malloc(sizeof(MPI_Request) * num_proc-1);
+  MPI_Request requests[num_proc-1];
 
   /*  Enviando e recebendo trabalho para/de escravos conforme steps.
    *  Cada processo recebe suas linhas + a linha anterior e a seguinte
@@ -81,22 +82,14 @@ void master(int rank) {
 
     int i;
     for (i = 2; i < num_proc - 1; ++i) {
-      MPI_Isend(prev+((i-2)*lines*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
+      MPI_Isend((prev+(i*lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
     }
 
     MPI_Isend(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
 
-    while(1) {
-      MPI_Testall(num_proc-2, requests, &flag, MPI_STATUSES_IGNORE);
-      if (flag == 1) { 
-        printf("Flag send\n"); 
-        break; 
-      }
-    }
-
     // num_proc-2 ou num_proc-1 ??
-    MPI_Waitall(num_proc-2, requests, MPI_STATUSES_IGNORE);
-  
+    MPI_Waitall(num_proc-1, requests, MPI_STATUSES_IGNORE);
+
     // Recebendo board novo
     MPI_Irecv(prev, lines*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
@@ -106,15 +99,7 @@ void master(int rank) {
 
     MPI_Irecv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
 
-    while(1) {
-      MPI_Testall(num_proc-2, requests, &flag, MPI_STATUSES_IGNORE);
-      if (flag == 1) { 
-        printf("Flag recv\n"); 
-        break; 
-      }
-    }
-
-    MPI_Waitall(num_proc-2,requests, MPI_STATUSES_IGNORE);
+    MPI_Waitall(num_proc-1,requests, MPI_STATUSES_IGNORE);
 
     #ifdef DEBUG
     printf("%d ----------\n", j);
@@ -137,12 +122,14 @@ void slave(int rank) {
   // Recebendo número de linhas, passos e tamanho
   int lines, size, steps, num_proc, count;
   MPI_Status st;
+  int info[3];
 
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
 
-  MPI_Bcast(&lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
+  lines = info[0];
+  size = info[1];
+  steps = info[2];
   
   /****************    Último processo     ****************/
   if (rank == num_proc-1) {
@@ -153,17 +140,11 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-      
-      MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
+      printf("Recebi rank %d\n", rank);
 
-      // int size, int lines, int start, int end
       play(prev, next, size, lines+1, 1, lines);
 
-      printf("Play rank: %d step: %d\n", rank, i);
-
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-
-      printf("Sending rank: %d step: %d\n", rank, i);
     }
 
     //free(next);
@@ -176,16 +157,11 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-
-      MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
+      printf("Recebi rank %d\n", rank);
 
       play(prev, next, size, lines+1, 1, lines);
 
-      printf("Play rank: %d step: %d\n", rank, i);
-
       MPI_Send(next, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-
-      printf("Sending rank: %d step: %d\n", rank, i);
     }
 
     //free(next);
@@ -198,21 +174,16 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+      printf("Recebi rank %d\n", rank);
       
-      MPI_Get_count(&st, MPI_UNSIGNED_CHAR, &count);
-
       play(prev, next, size, lines+2, 1, lines);
 
-      printf("Play rank: %d step: %d\n", rank, i);
-
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-
-      printf("Sending rank: %d step: %d\n", rank, i);
     }
 
     //free(next);
     //free(prev);
-  } 
+  }
 }
 
 int main (int argc, char *argv[]) {
@@ -227,7 +198,7 @@ int main (int argc, char *argv[]) {
   } else {
     slave(rank);
   }
-  
+
   MPI_Barrier(MPI_COMM_WORLD);
   printf("========> RANK %d TERMINOU \n", rank);
   MPI_Finalize();
