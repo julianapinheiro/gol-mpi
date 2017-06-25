@@ -58,7 +58,7 @@ void master(int rank) {
    */ 
   int lines = size/(num_proc-1); 
   int reminder = size%(num_proc-1);
-  steps = 1;
+  //steps = 1;
   int info[3] = {lines, size, steps};
   MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
@@ -127,6 +127,7 @@ void slave(int rank) {
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
 
   MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
   lines = info[0];
   size = info[1];
   steps = info[2];
