@@ -20,7 +20,7 @@ typedef unsigned char cell_t;
 
 int adjacent_to (cell_t * board, int size, int lines, int i, int j);
 void play (cell_t * board, cell_t * newboard, int size, int lines, int start, int end);
-void print (cell_t * board, int size);
+void print (cell_t * board, int size, int lines);
 void read_file (FILE * f, cell_t * board, int size);
 
 void master(int rank) {
@@ -35,11 +35,10 @@ void master(int rank) {
   cell_t * prev = (cell_t *) malloc(sizeof(cell_t)*size*size);
   read_file (f, prev,size);
   fclose(f);
-  //cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*size);
 
-  #ifdef DEBUG
+  #ifdef INITIAL
   printf("Initial:\n");
-  print(prev,size);
+  print(prev,size, size);
   #endif
 
   /*  Devido a divisão de trabalho escolhida, utiliza-se no máximo
@@ -58,7 +57,7 @@ void master(int rank) {
    */ 
   int lines = size/(num_proc-1); 
   int reminder = size%(num_proc-1);
-  //steps = 1;
+
   int info[3] = {lines, size, steps};
   MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
@@ -69,8 +68,6 @@ void master(int rank) {
 
   int flag;
   MPI_Status st;
-  //MPI_Request* requests = (MPI_Request*) malloc(sizeof(MPI_Request) * num_proc-1);
-  MPI_Request requests[num_proc-1];
 
   /*  Enviando e recebendo trabalho para/de escravos conforme steps.
    *  Cada processo recebe suas linhas + a linha anterior e a seguinte
@@ -78,38 +75,39 @@ void master(int rank) {
    */
   for (int j = 0; j < steps; ++j) {
     // Enviando board
-    MPI_Isend(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
+    MPI_Send(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD);
+    
+    // Fazendo um print aqui pra checar as primeiras linhas só
+    print(prev, size, lines+1);
+    printf("--------------\n");
 
     int i;
     for (i = 2; i < num_proc - 1; ++i) {
-      MPI_Isend((prev+(i*lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
+      MPI_Send((prev+(i*lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD);
     }
 
-    MPI_Isend(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
-
-    // num_proc-2 ou num_proc-1 ??
-    MPI_Waitall(num_proc-1, requests, MPI_STATUSES_IGNORE);
+    MPI_Send(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD);
 
     // Recebendo board novo
-    MPI_Irecv(prev, lines*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
+    MPI_Recv(prev, lines*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &st);
 
     for (i = 2; i < num_proc - 1; ++i) {
-      MPI_Irecv(prev+(i*lines*size), lines*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &(requests[i-1]));
+      MPI_Recv(prev+(i*lines*size), lines*size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &st);
     }
 
-    MPI_Irecv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[i]));
+    MPI_Recv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &st);
 
-    MPI_Waitall(num_proc-1,requests, MPI_STATUSES_IGNORE);
+    MPI_Barrier(MPI_COMM_WORLD);
 
     #ifdef DEBUG
     printf("%d ----------\n", j);
-    print (prev,size);
+    print(prev,size, size);
     #endif
   }
 
   #ifdef RESULT
   printf("Final:\n");
-  print (prev,size);
+  print(prev,size, size);
   #endif
 
   //free(prev);
@@ -141,11 +139,11 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-      printf("Recebi rank %d\n", rank);
 
       play(prev, next, size, lines+1, 1, lines);
 
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+      MPI_Barrier(MPI_COMM_WORLD);
     }
 
     //free(next);
@@ -158,11 +156,14 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-      printf("Recebi rank %d\n", rank);
 
+      // Fazendo um print pra checar o que ele recebe
+      print(prev, size, lines+1);
+      printf("-----------------------\n");
       play(prev, next, size, lines+1, 1, lines);
 
       MPI_Send(next, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+      MPI_Barrier(MPI_COMM_WORLD);
     }
 
     //free(next);
@@ -175,11 +176,11 @@ void slave(int rank) {
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-      printf("Recebi rank %d\n", rank);
       
       play(prev, next, size, lines+2, 1, lines);
 
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+      MPI_Barrier(MPI_COMM_WORLD);
     }
 
     //free(next);
@@ -249,13 +250,13 @@ void play (cell_t * board, cell_t * newboard, int size, int lines, int start, in
 }
 
 /* print the life board */
-void print (cell_t * board, int size) {
+void print (cell_t * board, int size, int lines) {
   int i, j;
   /* for each row */
-  for (j=0; j<size; j++) {
+  for (j=0; j<lines; j++) {
     /* print each column position... */
     for (i=0; i<size; i++)
-    printf ("%c", board[size*i+j] ? 'x' : ' ');
+    printf ("%c", board[size*j+i] ? 'x' : ' ');
     /* followed by a carriage return */
     printf ("\n");
   }
@@ -275,7 +276,7 @@ void read_file (FILE * f, cell_t * board, int size) {
     fgets (s, size+10,f);
     /* copy the string to the life board */
     for (i=0; i<size; i++)
-    board[size*i+j] = s[i] == 'x';
+    board[size*j+i] = s[i] == 'x';
 
   }
 }
