@@ -67,6 +67,7 @@ void master(int rank) {
   MPI_Send(&last, 1, MPI_INT, (num_proc-1), 0, MPI_COMM_WORLD);
 
   MPI_Status st;
+  MPI_Request requests[num_proc-1];
 
   /*  Enviando e recebendo trabalho para/de escravos conforme steps.
    *  Cada processo recebe suas linhas + a linha anterior e a seguinte
@@ -74,24 +75,25 @@ void master(int rank) {
    */
   for (int j = 0; j < steps; ++j) {
     // Enviando board
-    MPI_Send(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD);
+    MPI_Isend(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
     int i;
     for (i =1; i < num_proc - 2; ++i) {
-      MPI_Send(prev+(i*(lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD);
+      MPI_Isend(prev+(i*(lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
     }
-    MPI_Send(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD);
+    MPI_Isend(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[num_proc-2]));
     
-    // Recebendo board novo
-    MPI_Recv(prev, lines*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &st);
+    MPI_Waitall(num_proc-1, requests, MPI_STATUSES_IGNORE);
 
-    for (i = 1; i < num_proc - 2; ++i) {
-      MPI_Recv(prev+(i*lines*size), lines*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &st);
+    // Recebendo board novo
+
+    for (i = 0; i < num_proc - 2; ++i) {
+      MPI_Irecv(prev+(i*lines*size), lines*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
     }
 
-    MPI_Recv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &st);
+    MPI_Irecv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[num_proc-2]));
 
-    //MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Waitall(num_proc-1,requests, MPI_STATUSES_IGNORE);
 
     #ifdef DEBUG
     printf("%d ----------\n", j);
