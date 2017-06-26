@@ -48,6 +48,12 @@ void master(int rank) {
    */
   int num_proc;
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
+
+  // Em caso de 1 ou 2 processos, o mestre faz o trabalho sozinho
+  if (num_proc == 1 || num_proc == 2) {
+    return;
+  }
+
   if (num_proc > size + 1) {
     num_proc = size + 1;
   }
@@ -68,18 +74,20 @@ void master(int rank) {
 
   MPI_Status st;
   MPI_Request requests[num_proc-1];
+  int add;
 
   /*  Enviando e recebendo trabalho para/de escravos conforme steps.
    *  Cada processo recebe suas linhas + a linha anterior e a seguinte
    *  para poder utilizar o método adjacent_to()
    */
   for (int j = 0; j < steps; ++j) {
-    // Enviando board
+    // Enviando board 
     MPI_Isend(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &(requests[0]));
 
     int i;
     for (i =1; i < num_proc - 2; ++i) {
-      MPI_Isend(prev+(i*(lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
+      add =  size*lines*i-size;
+      MPI_Isend(prev+add, (lines+2)*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
     }
     MPI_Isend(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[num_proc-2]));
     
@@ -88,7 +96,8 @@ void master(int rank) {
     // Recebendo board novo
 
     for (i = 0; i < num_proc - 2; ++i) {
-      MPI_Irecv(prev+(i*lines*size), lines*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
+      add = i*lines*size;
+      MPI_Irecv(prev+add, lines*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
     }
 
     MPI_Irecv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &(requests[num_proc-2]));
@@ -111,12 +120,14 @@ void master(int rank) {
 
 void slave(int rank) {
   /*************    Processos escravos     *************/
-  
   int lines, size, steps, num_proc, count;
   MPI_Status st;
   int info[3];
 
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
+
+  // Em caso de dois processos, o mestre faz o trabalho sozinho
+  if (num_proc == 2) return; 
 
   // Recebendo número de linhas, passos e tamanho
   MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
@@ -171,7 +182,7 @@ void slave(int rank) {
 
 int main (int argc, char *argv[]) {
 
-  int rank;
+  int rank, size;
 
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
