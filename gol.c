@@ -49,10 +49,8 @@ void master(int rank) {
   int num_proc;
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
 
-  // Em caso de 1 ou 2 processos, o mestre faz o trabalho sozinho
-  if (num_proc == 1 || num_proc == 2) {
-    return;
-  }
+  // Não foi implementado caso de 1 ou 2 processos
+  if (num_proc == 1 || num_proc == 2) return;
 
   if (num_proc > size + 1) {
     num_proc = size + 1;
@@ -60,17 +58,15 @@ void master(int rank) {
 
   /*  Dividindo linhas por processos para broadcast
    *  num_proc - 1 porque o primeiro é o mestre
+   *  Último recebe quantidade diferente (linhas + resto)
    */ 
   int lines = size/(num_proc-1); 
   int reminder = size%(num_proc-1);
-
-  int info[3] = {lines, size, steps};
-  MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  // Último recebe quantidade diferente (linhas + resto)
   int last = lines + reminder;
-  MPI_Send(&last, 1, MPI_INT, (num_proc-1), 0, MPI_COMM_WORLD);
+
+  int info[4] = {lines, size, steps, last};
+  MPI_Bcast(info, 4, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Status st;
   MPI_Request requests[num_proc-1];
@@ -94,7 +90,6 @@ void master(int rank) {
     MPI_Waitall(num_proc-1, requests, MPI_STATUSES_IGNORE);
 
     // Recebendo board novo
-
     for (i = 0; i < num_proc - 2; ++i) {
       add = i*lines*size;
       MPI_Irecv(prev+add, lines*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD, &(requests[i]));
@@ -120,48 +115,48 @@ void master(int rank) {
 
 void slave(int rank) {
   /*************    Processos escravos     *************/
-  int lines, size, steps, num_proc, count;
+  int lines, size, steps, num_proc, last, sizeY;
   MPI_Status st;
-  int info[3];
+  int info[4];
 
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
 
-  // Em caso de dois processos, o mestre faz o trabalho sozinho
+  // Não foi implementado caso de 2 processos
   if (num_proc == 2) return; 
 
   // Recebendo número de linhas, passos e tamanho
-  MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(info, 4, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
   lines = info[0];
   size = info[1];
   steps = info[2];
+  last = info[3];
 
-  int sizeY = lines+1;  // Tamanho para rank = 1 e rank = num_proc-1
-  if (rank != 1 && rank != num_proc-1) sizeY = lines+2;
+  // Tamanho específico para cada processo
+  if (rank == 1) {
+    sizeY = lines+1;
+  } else if (rank == num_proc-1) {
+    sizeY = last+1;
+  } else {
+    sizeY = lines + 2;
+  }
 
   cell_t * prev = (cell_t *) malloc(sizeof(cell_t*)*size*sizeY);
   cell_t * next = (cell_t *) malloc(sizeof(cell_t*)*size*sizeY);
   
   if (rank == num_proc-1) {
     /****************    Último processo     ****************/
-    MPI_Recv(&lines, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
-
     for (int i = 0; i < steps; ++i) {
-      MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-
-      // lines +1 porque end é nao inclusivo
-      play(prev, next, size, lines+1, 1, lines+1);
-
-      MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
+      MPI_Recv(prev, (last+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
+      play(prev, next, size, last+1, 1, last+1);
+      MPI_Send(next+size, last*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
     }
 
   } else if (rank == 1) {
     /****************    Primeiro processo     ****************/
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-
       play(prev, next, size, lines+1, 0, lines);
-
       MPI_Send(next, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
     }
 
@@ -169,9 +164,7 @@ void slave(int rank) {
     /****************     Processos do meio      ****************/
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-      
       play(prev, next, size, lines+2, 1, lines+1);
-
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
     }
   }
@@ -182,7 +175,7 @@ void slave(int rank) {
 
 int main (int argc, char *argv[]) {
 
-  int rank, size;
+  int rank;
 
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
