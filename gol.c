@@ -66,7 +66,6 @@ void master(int rank) {
   int last = lines + reminder;
   MPI_Send(&last, 1, MPI_INT, (num_proc-1), 0, MPI_COMM_WORLD);
 
-  int flag;
   MPI_Status st;
 
   /*  Enviando e recebendo trabalho para/de escravos conforme steps.
@@ -79,9 +78,9 @@ void master(int rank) {
 
     int i;
     for (i =1; i < num_proc - 2; ++i) {
-      MPI_Send((prev+((i)*lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD);
+      MPI_Send(prev+(i*(lines-1)*size), (lines+2)*size, MPI_UNSIGNED_CHAR, i+1, 0, MPI_COMM_WORLD);
     }
-    MPI_Send(prev+((((i)*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD);
+    MPI_Send(prev+(((i*lines)-1)*size), (last+1)*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD);
     
     // Recebendo board novo
     MPI_Recv(prev, lines*size, MPI_UNSIGNED_CHAR, 1, 0, MPI_COMM_WORLD, &st);
@@ -92,7 +91,7 @@ void master(int rank) {
 
     MPI_Recv(prev+(i*lines*size), last*size, MPI_UNSIGNED_CHAR, num_proc-1, 0, MPI_COMM_WORLD, &st);
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    //MPI_Barrier(MPI_COMM_WORLD);
 
     #ifdef DEBUG
     printf("%d ----------\n", j);
@@ -105,110 +104,67 @@ void master(int rank) {
   print(prev,size, size);
   #endif
 
-  //free(prev);
-  //free(next);  
+  free(prev);
 }
 
 void slave(int rank) {
   /*************    Processos escravos     *************/
-
-  // Recebendo número de linhas, passos e tamanho
+  
   int lines, size, steps, num_proc, count;
   MPI_Status st;
   int info[3];
 
   MPI_Comm_size(MPI_COMM_WORLD, &num_proc);
 
+  // Recebendo número de linhas, passos e tamanho
   MPI_Bcast(info, 3, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
   lines = info[0];
   size = info[1];
   steps = info[2];
-  int teste = 0;
+
+  int sizeY = lines+1;  // Tamanho para rank = 1 e rank = num_proc-1
+  if (rank != 1 && rank != num_proc-1) sizeY = lines+2;
+
+  cell_t * prev = (cell_t *) malloc(sizeof(cell_t*)*size*sizeY);
+  cell_t * next = (cell_t *) malloc(sizeof(cell_t*)*size*sizeY);
   
   if (rank == num_proc-1) {
     /****************    Último processo     ****************/
-    // Trabalha com size-1<=
     MPI_Recv(&lines, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, NULL);
-
-    cell_t * prev = (cell_t *) malloc(sizeof(cell_t)*size*lines+1);
-    cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*lines+1);
 
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
-
-      //printf("----------------------- step %d\n", i);
-      //print(prev, size, lines+1); 
-      //printf("----------------------- step %d\n", i);
 
       // lines +1 porque end é nao inclusivo
       play(prev, next, size, lines+1, 1, lines+1);
 
-      //printf("----------------------- play %d\n", i);
-      //print(next+size, size, lines); 
-      //printf("----------------------- play %d\n", i);
-
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-      MPI_Barrier(MPI_COMM_WORLD);
     }
-
-    //free(next);
-    //free(prev);
 
   } else if (rank == 1) {
     /****************    Primeiro processo     ****************/
-    // Trabalha com as linhas 0 <= i < lines
-    cell_t * prev = (cell_t *) malloc(sizeof(cell_t)*size*lines+1);
-    cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*lines+1);
-
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+1)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
 
-      //printf("----------------------- step %d\n", i);
-      //print(prev, size, lines+1); 
-      //printf("----------------------- step %d\n", i);
-
-      //int size, int lines, int start, int end
       play(prev, next, size, lines+1, 0, lines);
 
-      //printf("----------------------- PLAY %d\n", i);
-      //print(next, size, lines); 
-      //printf("----------------------- play %d\n", i);
-
-
       MPI_Send(next, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-      MPI_Barrier(MPI_COMM_WORLD);
     }
-
-    //free(next);
-    //free(prev);
 
   } else {
     /****************     Processos do meio      ****************/
-    cell_t * prev = (cell_t *) malloc(sizeof(cell_t)*size*lines+2);
-    cell_t * next = (cell_t *) malloc(sizeof(cell_t)*size*lines+2);
-
     for (int i = 0; i < steps; ++i) {
       MPI_Recv(prev, (lines+2)*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
       
-      //printf("----------------------- step %d\n", i);
-      //print(prev, size, lines+2); 
-      //printf("----------------------- step %d\n", i);
-
-      //int size, int lines, int start, int end
       play(prev, next, size, lines+2, 1, lines+1);
 
-      //printf("----------------------- play %d\n", i);
-      //print(next+size, size, lines); 
-      //printf("----------------------- play %d\n", i);
-
       MPI_Send(next+size, lines*size, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
-      MPI_Barrier(MPI_COMM_WORLD);
     }
-
-    //free(next);
-    //free(prev);
   }
+
+  free(next);
+  free(prev);
 }
 
 int main (int argc, char *argv[]) {
@@ -225,7 +181,6 @@ int main (int argc, char *argv[]) {
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
-  printf("========> RANK %d TERMINOU \n", rank);
   MPI_Finalize();
 }
 
